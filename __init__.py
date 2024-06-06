@@ -1,43 +1,74 @@
-import requests
-import json
-from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+const groupMessageHandler = async (message) => {
+  const responding_msg = message.reply_to_message ? message.reply_to_message : message;
+  const imageURL = await getImageFromMessage(responding_msg);
+  if (!imageURL) {
+    if (responding_msg.text?.toLowerCase().includes("/help")) {
+      return await sendMessage(message.chat.id, getHelpMessage(app.locals.botName), {
+        reply_to_message_id: message.message_id,
+        parse_mode: "Markdown",
+      });
+    }
+    // cannot find image from the message mentioning the bot
+    return await sendMessage(
+      message.chat.id,
+      "Mention me in an anime screenshot, I will tell you what anime is that",
+      { reply_to_message_id: message.message_id },
+    );
+  }
+  setMessageReaction(message.chat.id, message.message_id, ["👌"]);
+  const result = await submitSearch(imageURL, responding_msg, message);
+  sendChatAction(message.chat.id, "typing");
+  setMessageReaction(message.chat.id, message.message_id, ["👍"]);
 
-# Telegram bot token
-TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+  if (result.isAdult) {
+    await sendMessage(
+      message.chat.id,
+      "I've found an adult result 😳\nPlease forward it to me via Private Chat 😏",
+      {
+        reply_to_message_id: responding_msg.message_id,
+      },
+    );
+    return;
+  }
 
-# Trace.moe API endpoint
-TRACE_MOE_API_URL = 'https://trace.moe/api/search'
+  if (result.video && !messageIsSkipPreview(message)) {
+    const videoLink = messageIsMute(message) ? ${result.video}&mute : result.video;
+    const video = await fetch(videoLink, { method: "HEAD" });
+    if (video.ok && video.headers.get("content-length") > 0) {
+      await sendVideo(message.chat.id, videoLink, {
+        caption: result.text,
+        has_spoiler: responding_msg.has_media_spoiler,
+        parse_mode: "Markdown",
+        reply_to_message_id: responding_msg.message_id,
+      });
+      return;
+    }
+  }
 
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('Send me an image or video and I will try to identify the anime scene!')
+  await sendMessage(message.chat.id, result.text, {
+    parse_mode: "Markdown",
+    reply_to_message_id: responding_msg.message_id,
+  });
+};
 
-def analyze_media(update: Update, context: CallbackContext) -> None:
-    file_id = update.message.photo[-1].file_id
-    file_path = context.bot.get_file(file_id).file_path
-    file_url = f'https://api.telegram.org/file/bot{TOKEN}/{file_path}'
-    
-    response = requests.post(TRACE_MOE_API_URL, files={'image': requests.get(file_url).content})
-    
-    if response.status_code == 200:
-        data = json.loads(response.text)
-        anime_title = data['docs'][0]['title_native']
-        episode_number = data['docs'][0]['episode']
-        similarity = data['docs'][0]['similarity']
-        
-        update.message.reply_text(f'Anime Title: {anime_title}\nEpisode: {episode_number}\nSimilarity: {similarity}')
-    else:
-        update.message.reply_text('Failed to analyze the media. Please try again.')
+app.post("/", async (req, res) => {
+  const message = req.body?.message;
+  if (message?.chat?.type === "private") {
+    await privateMessageHandler(message);
+    setMessageReaction(message.chat.id, message.message_id, []);
+  } else if (message?.chat?.type === "group" || message?.chat?.type === "supergroup") {
+    if (messageIsMentioningBot(message)) {
+      await groupMessageHandler(message);
+      setMessageReaction(message.chat.id, message.message_id, []);
+    }
+  }
+  res.sendStatus(204);
+});
 
-def main() -> None:
-    updater = Updater(TOKEN)
-    dispatcher = updater.dispatcher
-    
-    dispatcher.add_handler(CommandHandler('start', start))
-    dispatcher.add_handler(MessageHandler(Filters.photo, analyze_media))
-    
-    updater.start_polling()
-    updater.idle()
+app.get("/", (req, res) => {
+  return res.send(
+    <meta http-equiv="Refresh" content="0; URL=https://t.me/${app.locals.botName ?? ""}">,
+  );
+});
 
-if name == 'main':
-    main()
+app.listen(PORT, "0.0.0.0", () => console.log(server listening on port ${PORT}));
